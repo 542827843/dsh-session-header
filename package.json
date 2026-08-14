@@ -1,0 +1,20 @@
+{
+  "name": "dsh-session-header",
+  "version": "0.1.0",
+  "description": "Inject an x-session-id HTTP header onto every DeepSeek Harness LLM provider request, carrying the harness session id of that exact call.",
+  "type": "module",
+  "main": "index.js",
+  "files": ["index.js", "cordis.patch.yml", "README.md", "README.zh.md", "LICENSE"],
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "llm",
+    "session",
+    "header"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
+  }
+}
