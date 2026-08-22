@@ -17,8 +17,8 @@ harness 没有请求级 header 缝——`GenerateOptions` 没有 headers 字段�
 
 取值语义：
 
-- 默认：取当前调用 `GenerateOptions.sessionId`——主会话各轮次、压缩/起标题辅助调用、in-process 子 agent 各自上报**自己的** session id（子 agent 拥有独立的 child session id）；
-- 配置 `value`：所有调用使用固定值；
+- 默认：取当前调用 `GenerateOptions.sessionId`，并剥掉 harness 的 `session-` 品牌前缀（发送纯 UUID）——主会话各轮次、压缩/起标题辅助调用、in-process 子 agent 各自上报**自己的** session id（子 agent 拥有独立的 child session id）；
+- 配置 `value`：所有调用使用固定值（按配置原样发送，不剥前缀）；
 - 两者皆无的调用不发这个 header。
 
 ## 安装
@@ -66,7 +66,7 @@ dsh --patch ./my-overlay.yml
 把某个 provider 的 `baseURL` 指向会记录请求 header 的网关（或任何回显请求头的端点），开一个会话：
 
 ```
-x-session-id: session-ba104306-a748-4052-a6e3-ab60be2e4c1f
+x-session-id: ba104306-a748-4052-a6e3-ab60be2e4c1f
 ```
 
 同一会话的所有请求带同一 id；spawn 出的子 agent 的请求带 child session id。

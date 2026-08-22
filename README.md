@@ -17,8 +17,8 @@ Context propagation uses `AsyncLocalStorage`: only fetches that happen inside an
 
 Semantics of the value:
 
-- default: `GenerateOptions.sessionId` of the call in flight — so main-session turns, compaction/title helper calls, and in-process subagent children each report **their own** session id (subagents get their own child session ids);
-- `value` config: a fixed value for every call instead;
+- default: `GenerateOptions.sessionId` of the call in flight, with the harness's `session-` branding prefix stripped (a plain UUID is sent) — main-session turns, compaction/title helper calls, and in-process subagent children each report **their own** session id (subagents get their own child session ids);
+- `value` config: a fixed value for every call instead (sent verbatim, no prefix stripping);
 - calls with neither get no header.
 
 ## Install
@@ -66,7 +66,7 @@ dsh --patch ./my-overlay.yml
 Point a provider's `baseURL` at a logging gateway (or any endpoint that echoes request headers) and start a session:
 
 ```
-x-session-id: session-ba104306-a748-4052-a6e3-ab60be2e4c1f
+x-session-id: ba104306-a748-4052-a6e3-ab60be2e4c1f
 ```
 
 Every request of the same conversation carries the same id; a spawned subagent's requests carry the child session id.

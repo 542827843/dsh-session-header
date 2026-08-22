@@ -19,11 +19,12 @@
  * lands in the store, while unrelated fetches (web RPC, telemetry, tools)
  * see no store and pass through untouched.
  *
- * A fixed value can be configured instead of the live session id; calls with
- * neither a configured value nor a session id get no header. A header anyone
- * else already set is never overwritten (`Headers` matching is
- * case-insensitive, the same rule the wire uses). Unloading the plugin
- * restores the original fetch.
+ * A fixed value can be configured instead of the live session id (sent
+ * verbatim); the live id's `session-` branding prefix is stripped so a plain
+ * UUID goes on the wire. Calls with neither a configured value nor a session
+ * id get no header. A header anyone else already set is never overwritten
+ * (`Headers` matching is case-insensitive, the same rule the wire uses).
+ * Unloading the plugin restores the original fetch.
  *
  * @module dsh-session-header
  */
@@ -80,7 +81,11 @@ export function apply(ctx, config) {
   }
 
   globalThis.fetch = patchedFetch
-  ctx.effect(() => {
+  // cordis `ctx.effect`: the callback runs IMMEDIATELY (setup); its RETURN
+  // VALUE is the disposer collected for fiber unload. v0.1.0 ran the restore
+  // in the callback body — undoing the patch in the same tick — so the fix
+  // returns the restore as the disposer.
+  ctx.effect(() => () => {
     if (globalThis.fetch === patchedFetch) {
       globalThis.fetch = originalFetch
     } else {
@@ -97,7 +102,7 @@ export function apply(ctx, config) {
       header: config.header,
       value:
         config.value ??
-        (options.sessionId !== undefined ? String(options.sessionId) : undefined),
+        (options.sessionId !== undefined ? String(options.sessionId).replace(/^session-/, '') : undefined),
     }
     let exhausted = false
     try {
