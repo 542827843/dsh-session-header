@@ -152,6 +152,60 @@ test('tools/execute: URL object input is matched by prefix', async (t) => {
   assert.equal(recorder.calls[0].headers.get('x-opencode-session'), 'uuid-123')
 })
 
+// --- overwriteHeaders: replace placeholder values hard-coded by official plugins ---
+
+test('tools/execute: overwriteHeaders replaces an existing placeholder header value', async (t) => {
+  const { handlers, recorder } = boot(t, {
+    header: 'x-opencode-session',
+    overwriteHeaders: ['x-opencode-session'],
+    toolEndpoints: ['https://gateway.example.com/'],
+  })
+  const exec = { agent: { id: 'session-uuid-123' } }
+  const next = async () => {
+    // Simulates dsh-web-search-deepseek's hard-coded placeholder header.
+    await fetch('https://gateway.example.com/messages', {
+      headers: { 'x-opencode-session': 'dsh-web-search' },
+    })
+  }
+  await handlers.get('tools/execute')(exec, next)
+  assert.equal(recorder.calls.length, 1)
+  assert.equal(recorder.calls[0].headers.get('x-opencode-session'), 'uuid-123')
+})
+
+test('tools/execute: header NOT listed in overwriteHeaders stays untouched', async (t) => {
+  const { handlers, recorder } = boot(t, {
+    header: 'x-opencode-session',
+    overwriteHeaders: ['another-header'],
+    toolEndpoints: ['https://gateway.example.com/'],
+  })
+  const exec = { agent: { id: 'session-uuid-123' } }
+  const next = async () => {
+    await fetch('https://gateway.example.com/messages', {
+      headers: { 'x-opencode-session': 'dsh-web-search' },
+    })
+  }
+  await handlers.get('tools/execute')(exec, next)
+  assert.equal(recorder.calls.length, 1)
+  assert.equal(recorder.calls[0].headers.get('x-opencode-session'), 'dsh-web-search')
+})
+
+test('llm/stream: overwriteHeaders also applies in the LLM scope', async (t) => {
+  const { handlers, recorder } = boot(t, {
+    header: 'x-opencode-session',
+    overwriteHeaders: ['x-opencode-session'],
+  })
+  async function* inner() {
+    await fetch('https://llm.example.com/v1/messages', {
+      headers: { 'x-opencode-session': 'placeholder' },
+    })
+    yield 'chunk-1'
+  }
+  const gen = handlers.get('llm/stream')({ sessionId: 'session-abc' }, () => inner())
+  for await (const _ of gen) { /* drain */ }
+  assert.equal(recorder.calls.length, 1)
+  assert.equal(recorder.calls[0].headers.get('x-opencode-session'), 'abc')
+})
+
 // --- llm/stream regression (existing behavior must not change) ---
 
 test('llm/stream: still injects unconditionally with the live session id', async (t) => {

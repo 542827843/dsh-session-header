@@ -55,6 +55,15 @@ export const Config = Schema.object({
    * requests are injected.
    */
   toolEndpoints: Schema.array(Schema.string()).default([]),
+  /**
+   * Header names this plugin is allowed to OVERWRITE when they already carry a
+   * value. Everything else keeps the "never overwrite" rule. Some official
+   * providers hard-code placeholder values (e.g. dsh-web-search-deepseek sends
+   * `x-opencode-session: dsh-web-search`), which a gateway rejects as missing;
+   * listing the header here lets the live session id replace that placeholder.
+   * Case-insensitive match, default empty = never overwrite.
+   */
+  overwriteHeaders: Schema.array(Schema.string()).default([]),
 })
 
 /**
@@ -87,8 +96,14 @@ export function apply(ctx, config) {
     if (init?.headers !== undefined) {
       for (const [key, value] of new Headers(init.headers)) headers.set(key, value)
     }
-    // Inject only when absent; never overwrite a value someone else set.
-    if (headers.has(injection.header)) {
+    // Inject only when absent — unless the header is explicitly listed in
+    // `overwriteHeaders`, in which case the live session id replaces whatever
+    // placeholder value another layer (an official provider) hard-coded.
+    const overwriteList = injection.overwrite ?? []
+    if (
+      headers.has(injection.header) &&
+      !overwriteList.some((name) => name.toLowerCase() === injection.header.toLowerCase())
+    ) {
       return originalFetch(input, init)
     }
     headers.set(injection.header, injection.value)
@@ -123,6 +138,7 @@ export function apply(ctx, config) {
       value:
         config.value ??
         (options.sessionId !== undefined ? String(options.sessionId).replace(/^session-/, '') : undefined),
+      overwrite: config.overwriteHeaders ?? [],
     }
     let exhausted = false
     try {
@@ -158,6 +174,7 @@ export function apply(ctx, config) {
       value:
         config.value ?? String(agentId).replace(/^session-/, ''),
       match: endpoints,
+      overwrite: config.overwriteHeaders ?? [],
     }
     return als.run(scope, () => next())
   })
