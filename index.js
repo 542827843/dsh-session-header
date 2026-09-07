@@ -75,20 +75,62 @@ export function apply(ctx, config) {
   const als = new AsyncLocalStorage()
   const originalFetch = globalThis.fetch
 
+  // Pre-compile toolEndpoints into origin-anchored matchers so the whitelist
+  // can never match a sibling domain: `https://gateway.example.com` must not
+  // match `https://gateway.example.com.evil.io/x`. The URL parser normalizes
+  // host casing and default ports; the path comparison then enforces a
+  // boundary character so `/zen/go/v1` matches `/zen/go/v1/messages` but not
+  // `/zen/go/v10`. Unparseable or non-http(s) prefixes are dropped (fail
+  // closed: a broken prefix simply never matches, so no header is sent).
+  const endpointMatchers = (config.toolEndpoints ?? [])
+    .map((prefix) => {
+      let parsed
+      try {
+        parsed = new URL(prefix)
+      } catch {
+        ctx.logger.warn(`dsh-session-header: ignoring unparseable toolEndpoint ${JSON.stringify(prefix)}`)
+        return undefined
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        ctx.logger.warn(`dsh-session-header: ignoring non-http(s) toolEndpoint ${JSON.stringify(prefix)}`)
+        return undefined
+      }
+      return { origin: parsed.origin, path: parsed.pathname }
+    })
+    .filter((entry) => entry !== undefined)
+
+  const urlMatchesEndpoint = (input) => {
+    let target
+    try {
+      const raw =
+        typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url
+      if (typeof raw !== 'string') return false
+      target = new URL(raw)
+    } catch {
+      return false
+    }
+    return endpointMatchers.some(({ origin, path }) => {
+      if (target.origin !== origin) return false
+      if (path === '/') return true
+      const pathname = target.pathname
+      return (
+        pathname === path ||
+        (pathname.startsWith(path) &&
+          (path.endsWith('/') || pathname[path.length] === '/' || pathname[path.length] === '?' || pathname[path.length] === '#'))
+      )
+    })
+  }
+
   const patchedFetch = (input, init) => {
     const injection = als.getStore()
     if (injection === undefined || injection.value === undefined) {
       return originalFetch(input, init)
     }
-    // Tool-phase scopes carry a URL whitelist; skip fetches that do not target
-    // one of the configured prefixes so the session id never leaks to
+    // Tool-phase scopes carry the whitelist gate; skip fetches that do not
+    // target one of the configured endpoints so the session id never leaks to
     // third-party hosts the tools talk to.
-    if (injection.match !== undefined) {
-      const url =
-        typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url
-      if (typeof url !== 'string' || !injection.match.some((prefix) => url.startsWith(prefix))) {
-        return originalFetch(input, init)
-      }
+    if (injection.match !== undefined && !urlMatchesEndpoint(input)) {
+      return originalFetch(input, init)
     }
     // Collect headers from both fetch() spellings: a Request object carries
     // its own, and init.headers overrides them per the fetch standard.
@@ -168,7 +210,16 @@ export function apply(ctx, config) {
   ctx.on('tools/execute', async (exec, next) => {
     const endpoints = config.toolEndpoints ?? []
     const agentId = exec.agent?.id
-    if (agentId === undefined || endpoints.length === 0) return next()
+    // Empty agent id (not just missing) also means "no session to report":
+    // both scopes share the same no-value ⇒ no-header semantics.
+    if (
+      agentId === undefined ||
+      typeof agentId !== 'string' ||
+      agentId.length === 0 ||
+      endpoints.length === 0
+    ) {
+      return next()
+    }
     const scope = {
       header: config.header,
       value:

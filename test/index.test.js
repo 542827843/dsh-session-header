@@ -245,3 +245,94 @@ test('unloading restores the fetch that was installed before apply', async (t) =
   assert.equal(globalThis.fetch, recorder.fn)
   recorder.restore()
 })
+
+// --- review follow-ups: Request spelling, case-insensitive overwrite, boundary ---
+
+test('tools/execute: Request input matching the whitelist is injected', async (t) => {
+  const { handlers, recorder } = boot(t, {
+    header: 'x-opencode-session',
+    overwriteHeaders: ['x-opencode-session'],
+    toolEndpoints: ['https://gateway.example.com/'],
+  })
+  const exec = { agent: { id: 'session-uuid-123' } }
+  const next = async () => {
+    const request = new Request('https://gateway.example.com/messages', {
+      method: 'POST',
+      headers: { 'x-opencode-session': 'dsh-web-search' },
+    })
+    await fetch(request)
+  }
+  await handlers.get('tools/execute')(exec, next)
+  assert.equal(recorder.calls.length, 1)
+  assert.equal(recorder.calls[0].headers.get('x-opencode-session'), 'uuid-123')
+})
+
+test('tools/execute: Request input NOT matching the whitelist passes through untouched', async (t) => {
+  const { handlers, recorder } = boot(t, {
+    header: 'x-opencode-session',
+    toolEndpoints: ['https://gateway.example.com/'],
+  })
+  const exec = { agent: { id: 'session-uuid-123' } }
+  const next = async () => {
+    const request = new Request('https://other.example.org/messages', {
+      method: 'POST',
+      headers: { 'x-opencode-session': 'dsh-web-search' },
+    })
+    await fetch(request)
+  }
+  await handlers.get('tools/execute')(exec, next)
+  assert.equal(recorder.calls.length, 1)
+  assert.equal(recorder.calls[0].url, 'https://other.example.org/messages')
+  assert.equal(recorder.calls[0].headers.get('x-opencode-session'), 'dsh-web-search')
+})
+
+test('tools/execute: sibling domain never matches (host boundary)', async (t) => {
+  const { handlers, recorder } = boot(t, {
+    header: 'x-opencode-session',
+    toolEndpoints: ['https://gateway.example.com'], // no trailing slash on purpose
+  })
+  const exec = { agent: { id: 'session-uuid-123' } }
+  const next = async () => {
+    await fetch('https://gateway.example.com.evil.io/messages')
+    await fetch('https://gateway.example.com/messages')
+  }
+  await handlers.get('tools/execute')(exec, next)
+  assert.equal(recorder.calls.length, 2)
+  assert.equal(recorder.calls[0].url, 'https://gateway.example.com.evil.io/messages')
+  assert.equal(recorder.calls[0].headers.has('x-opencode-session'), false)
+  assert.equal(recorder.calls[1].url, 'https://gateway.example.com/messages')
+  assert.equal(recorder.calls[1].headers.get('x-opencode-session'), 'uuid-123')
+})
+
+test('tools/execute: path prefix respects boundaries (/v1 not /v10)', async (t) => {
+  const { handlers, recorder } = boot(t, {
+    header: 'x-opencode-session',
+    toolEndpoints: ['https://gateway.example.com/zen/go/v1'],
+  })
+  const exec = { agent: { id: 'session-uuid-123' } }
+  const next = async () => {
+    await fetch('https://gateway.example.com/zen/go/v10/messages')
+    await fetch('https://gateway.example.com/zen/go/v1/messages')
+  }
+  await handlers.get('tools/execute')(exec, next)
+  assert.equal(recorder.calls.length, 2)
+  assert.equal(recorder.calls[0].headers.has('x-opencode-session'), false)
+  assert.equal(recorder.calls[1].headers.get('x-opencode-session'), 'uuid-123')
+})
+
+test('tools/execute: case-insensitive overwrite of a placeholder header', async (t) => {
+  const { handlers, recorder } = boot(t, {
+    header: 'x-opencode-session',
+    overwriteHeaders: ['X-OPENCODE-SESSION'], // deliberately different case
+    toolEndpoints: ['https://gateway.example.com/'],
+  })
+  const exec = { agent: { id: 'session-uuid-123' } }
+  const next = async () => {
+    await fetch('https://gateway.example.com/messages', {
+      headers: { 'X-OPENCODE-SESSION': 'dsh-web-search' }, // different case on wire
+    })
+  }
+  await handlers.get('tools/execute')(exec, next)
+  assert.equal(recorder.calls.length, 1)
+  assert.equal(recorder.calls[0].headers.get('x-opencode-session'), 'uuid-123')
+})
