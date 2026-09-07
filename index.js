@@ -45,6 +45,16 @@ export const Config = Schema.object({
    * in flight" (`GenerateOptions.sessionId`); calls with neither get no header.
    */
   value: Schema.string(),
+  /**
+   * URL prefixes matched during tool execution. When non-empty, fetches that
+   * happen inside a `tools/execute` waterfall (tool calls such as a web-search
+   * Messages API against your model gateway) get the header ONLY when their
+   * URL starts with one of these prefixes. Third-party tool targets (web_fetch
+   * of arbitrary pages, GitHub, MCP servers, ...) stay untouched. Empty (the
+   * default) keeps the upstream single-scope behavior: only LLM provider
+   * requests are injected.
+   */
+  toolEndpoints: Schema.array(Schema.string()).default([]),
 })
 
 /**
@@ -60,6 +70,16 @@ export function apply(ctx, config) {
     const injection = als.getStore()
     if (injection === undefined || injection.value === undefined) {
       return originalFetch(input, init)
+    }
+    // Tool-phase scopes carry a URL whitelist; skip fetches that do not target
+    // one of the configured prefixes so the session id never leaks to
+    // third-party hosts the tools talk to.
+    if (injection.match !== undefined) {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.href : input?.url
+      if (typeof url !== 'string' || !injection.match.some((prefix) => url.startsWith(prefix))) {
+        return originalFetch(input, init)
+      }
     }
     // Collect headers from both fetch() spellings: a Request object carries
     // its own, and init.headers overrides them per the fetch standard.
@@ -119,5 +139,26 @@ export function apply(ctx, config) {
     } finally {
       if (!exhausted) await iterator.return?.()
     }
+  })
+
+  // Tool execution happens BETWEEN two streamed turns — outside any
+  // `llm/stream` scope — so gateway calls made from inside a tool (e.g. an
+  // Anthropic-compatible web-search Messages API against the same baseURL)
+  // used to miss the header entirely. The `tools/execute` waterfall carries
+  // `exec.agent.id` = the harness session id of the agent running the tool
+  // (main session, compaction/title helpers, and in-process subagents each
+  // report their own). Cover the whole promise chain in a scope so every
+  // fetch the tool awaits is a candidate — then let the whitelist decide.
+  ctx.on('tools/execute', async (exec, next) => {
+    const endpoints = config.toolEndpoints ?? []
+    const agentId = exec.agent?.id
+    if (agentId === undefined || endpoints.length === 0) return next()
+    const scope = {
+      header: config.header,
+      value:
+        config.value ?? String(agentId).replace(/^session-/, ''),
+      match: endpoints,
+    }
+    return als.run(scope, () => next())
   })
 }

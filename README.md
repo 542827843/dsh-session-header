@@ -60,6 +60,7 @@ dsh --patch ./my-overlay.yml
 | --- | --- | --- | --- |
 | `header` | string | `x-session-id` | header name to inject; case-insensitive on the wire |
 | `value` | string | — | fixed value; unset = the harness session id of the call in flight |
+| `toolEndpoints` | string[] | `[]` | URL prefixes matched during tool execution. When non-empty, fetches inside a `tools/execute` waterfall — e.g. a gateway web-search Messages API called from a tool — get the header only when their URL starts with one of these prefixes; third-party tool targets (web_fetch of arbitrary pages, GitHub, MCP servers) stay untouched. Empty (default) keeps the upstream LLM-only injection. |
 
 ## Verify it
 
